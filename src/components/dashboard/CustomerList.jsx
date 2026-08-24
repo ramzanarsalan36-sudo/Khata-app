@@ -525,12 +525,12 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
         </div>
       </div>
 
-      {/* Floating Add Customer Action Button (Mobile-first only, hidden on desktop) */}
-      <div className="lg:hidden fixed bottom-18 right-4 z-20">
+      {/* Floating Add Customer Action Button (Mobile-first only, positioned clearly above BottomNav) */}
+      <div className="lg:hidden fixed bottom-20 right-4 sm:right-6 z-40">
         <button
           onClick={onAddCustomerClick}
-          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-4 py-3 rounded-full shadow-lg hover:shadow-xl flex items-center gap-2 transition active:scale-98 border border-emerald-500"
-          aria-label="Add customer"
+          className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-sm px-5 py-3.5 rounded-full shadow-2xl flex items-center gap-2 transition border-2 border-white ring-4 ring-emerald-600/30"
+          aria-label="Add new customer"
         >
           <Plus className="w-5 h-5 stroke-[2.5]" />
           <span>+ Add Customer</span>

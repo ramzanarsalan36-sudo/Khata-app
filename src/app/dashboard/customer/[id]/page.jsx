@@ -264,6 +264,7 @@ export default function CustomerDetailPage() {
         <div className="lg:col-span-5 xl:col-span-4">
           <CustomerHeader
             customer={customer}
+            onCustomerUpdated={(updated) => setCustomer(updated)}
             onReminderClick={() => setShowReminderModal(true)}
             onDownloadStatement={handleDownloadStatement}
             onOpenGave={() => handleOpenTx('GAVE')}

@@ -2,7 +2,8 @@
 
 import React, { useState } from 'react';
 import { useShop } from '@/lib/context/ShopContext';
-import { Store, X, Loader2 } from 'lucide-react';
+import { normalizePhoneNumber } from '@/lib/utils/phone';
+import { Store, X, Loader2, AlertCircle } from 'lucide-react';
 
 export default function CreateShopModal({ onClose, isInitial = false }) {
   const { createShop } = useShop();
@@ -13,24 +14,44 @@ export default function CreateShopModal({ onClose, isInitial = false }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  const handlePhoneChange = (e) => {
+    const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 10);
+    setPhone(digitsOnly);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!shopName.trim()) {
-      setError('Please enter shop name');
+    const cleanShop = shopName.trim();
+    const cleanOwner = ownerName.trim();
+
+    if (!cleanShop || cleanShop.length < 2) {
+      setError('Dukan ka valid naam darj karein (kam se kam 2 akshar).');
       return;
     }
-    if (!ownerName.trim()) {
-      setError('Please enter owner name');
+    if (!cleanOwner || cleanOwner.length < 2) {
+      setError('Malik ka valid naam darj karein (kam se kam 2 akshar).');
+      return;
+    }
+
+    if (phone && phone.length > 0 && phone.length !== 10) {
+      setError('Mobile number pure 10 digits ka hona chahiye.');
+      return;
+    }
+
+    if (phone && !/^[6-9]\d{9}$/.test(phone)) {
+      setError('Valid 10-digit Indian mobile number darj karein (6, 7, 8 ya 9 se shuru hona chahiye).');
       return;
     }
 
     setLoading(true);
     setError(null);
 
+    const cleanPhone = phone ? normalizePhoneNumber(phone) : null;
+
     const res = await createShop({
-      shop_name: shopName.trim(),
-      owner_name: ownerName.trim(),
-      phone: phone.trim() || null,
+      shop_name: cleanShop,
+      owner_name: cleanOwner,
+      phone: cleanPhone,
       address: address.trim() || null,
     });
 
@@ -63,7 +84,8 @@ export default function CreateShopModal({ onClose, isInitial = false }) {
           {!isInitial && (
             <button
               onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+              disabled={loading}
+              className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg disabled:opacity-50"
               aria-label="Close"
             >
               <X className="w-5 h-5" />
@@ -72,8 +94,9 @@ export default function CreateShopModal({ onClose, isInitial = false }) {
         </div>
 
         {error && (
-          <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">
-            {error}
+          <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{error}</span>
           </div>
         )}
 
@@ -108,15 +131,24 @@ export default function CreateShopModal({ onClose, isInitial = false }) {
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">
-              Shop Phone Number (Optional)
+              Shop Phone Number (10 Digits Only)
             </label>
-            <input
-              type="tel"
-              placeholder="e.g. 9876543210"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition"
-            />
+            <div className="relative">
+              <span className="absolute left-3.5 top-2.5 text-sm font-semibold text-slate-400">
+                +91
+              </span>
+              <input
+                type="tel"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={10}
+                placeholder="9876543210"
+                value={phone}
+                onChange={handlePhoneChange}
+                className="w-full pl-12 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition"
+              />
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1">Sirf 10 digit ka number likhein.</p>
           </div>
 
           <div>
@@ -132,20 +164,33 @@ export default function CreateShopModal({ onClose, isInitial = false }) {
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full mt-2 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm rounded-xl flex items-center justify-center gap-2 shadow-md transition active:scale-98 disabled:opacity-50"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Creating Shop...</span>
-              </>
-            ) : (
-              <span>Create Shop & Open Khata</span>
+          <div className="space-y-2 pt-1">
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm rounded-xl flex items-center justify-center gap-2 shadow-md transition active:scale-98 disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Creating Shop...</span>
+                </>
+              ) : (
+                <span>Create Shop & Open Khata</span>
+              )}
+            </button>
+
+            {!isInitial && onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={loading}
+                className="w-full py-2.5 text-slate-500 hover:text-slate-700 text-xs font-bold text-center transition hover:bg-slate-100 rounded-xl disabled:opacity-50"
+              >
+                Cancel (Radd Karein)
+              </button>
             )}
-          </button>
+          </div>
         </form>
       </div>
     </div>

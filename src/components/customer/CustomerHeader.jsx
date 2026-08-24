@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Phone, BellRing, FileDown, AlertCircle, ArrowUpRight, ArrowDownLeft, Camera, Loader2, User } from 'lucide-react';
+import { ArrowLeft, Phone, BellRing, FileDown, AlertCircle, ArrowUpRight, ArrowDownLeft, Camera, Loader2, User, UserCog } from 'lucide-react';
 import { FaWhatsapp } from 'react-icons/fa';
 import { getBalanceInfo } from '@/lib/utils/currency';
 import { formatIndianPhoneNumber, normalizeIndianPhoneNumber } from '@/lib/utils/phone';
@@ -10,9 +10,11 @@ import { buildCustomerBalanceWhatsAppMessage, generateWhatsAppUrl } from '@/lib/
 import { useShop } from '@/lib/context/ShopContext';
 import { createClient } from '@/lib/supabase/client';
 import { compressProfileImage } from '@/lib/utils/imageCompression';
+import EditCustomerModal from '@/components/customer/EditCustomerModal';
 
 export default function CustomerHeader({
   customer,
+  onCustomerUpdated,
   onReminderClick,
   onDownloadStatement,
   onOpenGave,
@@ -22,6 +24,7 @@ export default function CustomerHeader({
   const [photoUrl, setPhotoUrl] = useState(customer.photo_url || null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(false);
 
   const supabase = createClient();
   const balanceInfo = getBalanceInfo(customer.balance);
@@ -122,6 +125,14 @@ export default function CustomerHeader({
           </Link>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowEditModal(true)}
+              title="Edit Customer Profile"
+              className="p-2 bg-emerald-800/80 hover:bg-emerald-800 text-emerald-100 hover:text-white rounded-lg border border-emerald-600/60 transition min-w-[36px] min-h-[36px] flex items-center justify-center"
+            >
+              <UserCog className="w-4 h-4" />
+            </button>
+
             {onDownloadStatement && (
               <button
                 onClick={onDownloadStatement}
@@ -271,9 +282,18 @@ export default function CustomerHeader({
           </div>
 
           <div className="min-w-0 flex-1">
-            <h1 className="text-xl font-extrabold text-slate-900 leading-tight truncate">
-              {customer.name}
-            </h1>
+            <div className="flex items-center justify-between">
+              <h1 className="text-xl font-extrabold text-slate-900 leading-tight truncate">
+                {customer.name}
+              </h1>
+              <button
+                onClick={() => setShowEditModal(true)}
+                title="Edit Customer Profile"
+                className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
+              >
+                <UserCog className="w-4 h-4" />
+              </button>
+            </div>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
               {customer.phone ? formatIndianPhoneNumber(customer.phone) : 'No phone number added'}
             </p>
@@ -320,6 +340,14 @@ export default function CustomerHeader({
 
         {/* Customer Contact & Statement Actions */}
         <div className="space-y-2.5">
+          <button
+            onClick={() => setShowEditModal(true)}
+            className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition"
+          >
+            <UserCog className="w-4 h-4 text-slate-500" />
+            <span>Edit Profile & Phone</span>
+          </button>
+
           {waUrl ? (
             <a
               href={waUrl}
@@ -373,6 +401,17 @@ export default function CustomerHeader({
           )}
         </div>
       </div>
+
+      {/* Edit Customer Profile Modal */}
+      {showEditModal && (
+        <EditCustomerModal
+          customer={customer}
+          onClose={() => setShowEditModal(false)}
+          onCustomerUpdated={(updated) => {
+            if (onCustomerUpdated) onCustomerUpdated(updated);
+          }}
+        />
+      )}
     </div>
   );
 }

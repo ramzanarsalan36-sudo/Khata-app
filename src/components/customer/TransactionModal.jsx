@@ -288,25 +288,36 @@ export default function TransactionModal({
             )}
           </div>
 
-          {/* Submit Action Button with Double-Tap Prevention */}
-          <button
-            type="submit"
-            disabled={submitting}
-            className={`w-full py-3.5 text-white font-extrabold text-sm sm:text-base rounded-xl flex items-center justify-center gap-2 shadow-lg transition active:scale-98 disabled:opacity-50 ${
-              isGave
-                ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-600/20'
-                : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
-            }`}
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                <span>Saving to Ledger...</span>
-              </>
-            ) : (
-              <span>Save Entry (Khata Save Karein)</span>
-            )}
-          </button>
+          {/* Submit Action Button with Double-Tap Prevention & Cancel */}
+          <div className="space-y-2 pt-1">
+            <button
+              type="submit"
+              disabled={submitting}
+              className={`w-full py-3.5 text-white font-extrabold text-sm sm:text-base rounded-xl flex items-center justify-center gap-2 shadow-lg transition active:scale-98 disabled:opacity-50 ${
+                isGave
+                  ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-600/20'
+                  : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
+              }`}
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Saving to Ledger...</span>
+                </>
+              ) : (
+                <span>Save Entry (Khata Save Karein)</span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="w-full py-2.5 text-slate-500 hover:text-slate-700 text-xs font-bold text-center transition hover:bg-slate-100 rounded-xl disabled:opacity-50"
+            >
+              Cancel (Radd Karein)
+            </button>
+          </div>
         </form>
       </div>
     </div>
