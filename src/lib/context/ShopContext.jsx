@@ -25,9 +25,11 @@ export function ShopProvider({ children }) {
   const supabase = createClient();
   const router = useRouter();
 
-  const loadUserAndShops = useCallback(async () => {
+  const loadUserAndShops = useCallback(async (isSilent = false) => {
     try {
-      setLoading(true);
+      if (!isSilent) {
+        setLoading(true);
+      }
       const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
 
       if (authError || !authUser) {
@@ -35,7 +37,7 @@ export function ShopProvider({ children }) {
         setShops([]);
         setCurrentShop(null);
         setCurrentRole(null);
-        setLoading(false);
+        if (!isSilent) setLoading(false);
         return;
       }
 
@@ -61,7 +63,7 @@ export function ShopProvider({ children }) {
 
       if (memberError) {
         console.error('Error fetching shops:', memberError);
-        setLoading(false);
+        if (!isSilent) setLoading(false);
         return;
       }
 
@@ -83,16 +85,21 @@ export function ShopProvider({ children }) {
     } catch (err) {
       console.error('Unexpected error loading shops:', err);
     } finally {
-      setLoading(false);
+      if (!isSilent) {
+        setLoading(false);
+      }
     }
   }, [supabase]);
 
   useEffect(() => {
-    loadUserAndShops();
+    loadUserAndShops(false);
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        loadUserAndShops();
+      if (event === 'SIGNED_IN') {
+        loadUserAndShops(true);
+      } else if (event === 'TOKEN_REFRESHED') {
+        // Silent update on token refresh so active modals and camera captures never unmount
+        loadUserAndShops(true);
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
         setShops([]);

@@ -234,15 +234,6 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
                   </button>
                 )}
               </div>
-
-              {/* Desktop "+ Add Customer" Header Button */}
-              <button
-                onClick={onAddCustomerClick}
-                className="hidden sm:flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs transition active:scale-98 shrink-0"
-              >
-                <Plus className="w-4 h-4" />
-                <span>+ Add Customer</span>
-              </button>
             </div>
 
             {/* Filter Pills & Sort Selector */}
@@ -331,15 +322,8 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
                     </div>
                     <h3 className="font-extrabold text-slate-900 text-base">No Customers Yet</h3>
                     <p className="text-xs text-slate-500 mt-1 max-w-sm leading-relaxed">
-                      Start maintaining your digital khata ledger. Add your first customer in seconds.
+                      Start maintaining your digital khata ledger. Tap the green <span className="font-bold text-emerald-700">(+)</span> button in the bottom corner to add your first customer.
                     </p>
-                    <button
-                      onClick={onAddCustomerClick}
-                      className="mt-4 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center gap-1.5 active:scale-95"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>+ Add First Customer</span>
-                    </button>
                   </>
                 )}
               </div>
@@ -359,61 +343,77 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
                   return (
                     <div
                       key={customer.id}
-                      className="p-4 flex items-center justify-between hover:bg-slate-50 active:bg-slate-100 transition group"
+                      className="p-3.5 sm:p-4 border-b border-slate-100 hover:bg-slate-50/80 transition flex items-center justify-between gap-3 group"
                     >
                       <Link
                         href={`/dashboard/customer/${customer.id}`}
-                        className="flex items-center gap-3.5 min-w-0 pr-2 flex-1"
+                        className="flex items-center gap-3 min-w-0 flex-1"
                       >
+                        {/* Avatar */}
                         {customer.photo_url ? (
                           <img
                             src={customer.photo_url}
                             alt={customer.name}
-                            className="w-11 h-11 rounded-xl object-cover border border-slate-200 shrink-0 group-hover:border-emerald-400 shadow-2xs transition"
+                            className="w-11 h-11 rounded-full object-cover shrink-0 border border-slate-200 shadow-2xs"
                           />
                         ) : (
-                          <div className="w-11 h-11 rounded-xl bg-slate-100 text-slate-700 font-extrabold text-sm flex items-center justify-center border border-slate-200 shrink-0 uppercase group-hover:border-emerald-300 group-hover:bg-emerald-50 group-hover:text-emerald-800 transition">
+                          <div className="w-11 h-11 rounded-full bg-emerald-100 text-emerald-800 font-black text-sm flex items-center justify-center shrink-0 uppercase border border-emerald-200">
                             {customer.name.charAt(0)}
                           </div>
                         )}
-                        <div className="min-w-0">
-                          <h4 className="font-bold text-slate-900 text-sm truncate group-hover:text-emerald-700 transition">
+
+                        <div className="min-w-0 flex-1">
+                          <h4 className="text-sm font-bold text-slate-900 truncate group-hover:text-emerald-700 transition">
                             {customer.name}
                           </h4>
-                          <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-400">
-                            {customer.phone && (
-                              <span className="flex items-center gap-1">
-                                <Phone className="w-3 h-3 text-slate-300" />
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {customer.phone ? (
+                              <span className="text-xs text-slate-400 font-medium">
                                 {formatIndianPhoneNumber(customer.phone)}
                               </span>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 italic">No phone</span>
                             )}
-                            {timeAgo && <span className="text-[11px] hidden sm:inline">• {timeAgo}</span>}
+                            {timeAgo && (
+                              <span className="text-[10px] text-slate-400 hidden sm:inline">
+                                • {timeAgo}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </Link>
 
-                      <div className="text-right shrink-0 flex items-center gap-3">
-                        <Link href={`/dashboard/customer/${customer.id}`} className="text-right">
-                          <div className={`font-black text-sm sm:text-base ${balanceInfo.colorClass}`}>
+                      {/* Right: Net Balance & Quick WhatsApp */}
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-right">
+                          <p className={`text-sm sm:text-base font-extrabold ${balanceInfo.colorClass}`}>
                             {balanceInfo.formattedAmount}
-                          </div>
-                          <div className="text-[10px] font-bold text-slate-500 mt-0.5">
+                          </p>
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block mt-0.5 ${balanceInfo.bgColor} ${balanceInfo.colorClass}`}
+                          >
                             {balanceInfo.label}
-                          </div>
-                        </Link>
+                          </span>
+                        </div>
 
-                        {/* WhatsApp Share Button */}
-                        <button
-                          onClick={(e) => handleWhatsAppQuickClick(e, customer)}
-                          className="w-10 h-10 rounded-xl bg-[#25D366]/10 hover:bg-[#25D366] text-[#25D366] hover:text-white flex items-center justify-center transition shadow-2xs active:scale-95 border border-[#25D366]/30"
-                          title={`Send WhatsApp message to ${customer.name}`}
-                          aria-label={`Send WhatsApp message to ${customer.name}`}
+                        {/* WhatsApp Quick Reminder button if customer has debt */}
+                        {customer.phone && Number(customer.balance) > 0 && (
+                          <button
+                            onClick={(e) => handleWhatsAppQuickClick(e, customer)}
+                            className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl transition hidden sm:flex items-center justify-center"
+                            title="Send WhatsApp Balance Statement"
+                            aria-label={`Send WhatsApp statement to ${customer.name}`}
+                          >
+                            <FaWhatsapp className="w-4 h-4" />
+                          </button>
+                        )}
+
+                        <Link
+                          href={`/dashboard/customer/${customer.id}`}
+                          className="p-1 text-slate-300 group-hover:text-slate-600 transition"
+                          aria-label={`Open ledger for ${customer.name}`}
                         >
-                          <FaWhatsapp className="w-5 h-5" />
-                        </button>
-
-                        <Link href={`/dashboard/customer/${customer.id}`} className="p-1">
-                          <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 transition" />
+                          <ChevronRight className="w-5 h-5" />
                         </Link>
                       </div>
                     </div>
@@ -456,16 +456,9 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
           {/* Quick Action Card */}
           <div className="bg-gradient-to-br from-emerald-600 to-emerald-800 text-white rounded-2xl p-5 shadow-md">
             <h3 className="font-bold text-base mb-1">Manage Your Ledger</h3>
-            <p className="text-xs text-emerald-100 mb-4 leading-relaxed">
-              Add new customer accounts, track daily credit & debit, and send instant WhatsApp receipts.
+            <p className="text-xs text-emerald-100 leading-relaxed">
+              Add new customer accounts, track daily credit & debit, and send instant WhatsApp receipts. Use the floating (+) button anytime.
             </p>
-            <button
-              onClick={onAddCustomerClick}
-              className="w-full py-3 bg-white text-emerald-800 font-extrabold text-xs rounded-xl shadow-md hover:bg-emerald-50 transition active:scale-98 flex items-center justify-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              <span>+ Add New Customer</span>
-            </button>
           </div>
 
           {/* Top Outstanding Due Customers (Fetched server-side) */}
@@ -523,18 +516,6 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
             <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 transition" />
           </Link>
         </div>
-      </div>
-
-      {/* Floating Add Customer Action Button (Mobile-first only, positioned clearly above BottomNav) */}
-      <div className="lg:hidden fixed bottom-20 right-4 sm:right-6 z-40">
-        <button
-          onClick={onAddCustomerClick}
-          className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-sm px-5 py-3.5 rounded-full shadow-2xl flex items-center gap-2 transition border-2 border-white ring-4 ring-emerald-600/30"
-          aria-label="Add new customer"
-        >
-          <Plus className="w-5 h-5 stroke-[2.5]" />
-          <span>+ Add Customer</span>
-        </button>
       </div>
     </div>
   );

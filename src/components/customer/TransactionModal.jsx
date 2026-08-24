@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useShop } from '@/lib/context/ShopContext';
 import { compressBillImage } from '@/lib/utils/imageCompression';
@@ -21,21 +21,42 @@ export default function TransactionModal({
   const [uploadStatus, setUploadStatus] = useState(''); // 'compressing', 'uploading', 'done'
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const fileInputRef = useRef(null);
 
   const supabase = createClient();
   const isGave = type === 'GAVE';
 
-  const handleImageChange = async (e) => {
+  // Cleanup object URL on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview);
+      }
+    };
+  }, [imagePreview]);
+
+  const handleImageChange = (e) => {
+    e.stopPropagation();
     const file = e.target.files?.[0];
+    // Reset file input value so user can reselect the same photo or retake if needed
+    if (e.target) {
+      e.target.value = '';
+    }
+
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      setError('Please select a valid image file');
+      setError('Kripya valid image file select karein.');
       return;
+    }
+
+    if (imagePreview) {
+      URL.revokeObjectURL(imagePreview);
     }
 
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
+    setError(null);
   };
 
   const removeImage = () => {
@@ -257,25 +278,35 @@ export default function TransactionModal({
                 <button
                   type="button"
                   onClick={removeImage}
-                  className="absolute top-1 right-1 bg-rose-600 text-white rounded-full p-1 shadow-sm"
+                  className="absolute top-1 right-1 bg-rose-600 hover:bg-rose-700 text-white rounded-full p-1 shadow-sm transition"
+                  title="Remove Receipt"
+                  aria-label="Remove receipt photo"
                 >
                   <X className="w-3 h-3" />
                 </button>
               </div>
             ) : (
-              <label className="flex items-center gap-2 p-3 bg-slate-50 hover:bg-slate-100 border border-dashed border-slate-300 rounded-xl cursor-pointer transition">
-                <Camera className="w-5 h-5 text-slate-500" />
-                <span className="text-xs font-semibold text-slate-600">
-                  Take Photo or Upload Receipt
-                </span>
+              <div>
                 <input
+                  ref={fileInputRef}
                   type="file"
                   accept="image/*"
                   capture="environment"
                   onChange={handleImageChange}
+                  onClick={(e) => e.stopPropagation()}
                   className="hidden"
                 />
-              </label>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full flex items-center gap-2 p-3 bg-slate-50 hover:bg-slate-100 border border-dashed border-slate-300 rounded-xl cursor-pointer transition text-left"
+                >
+                  <Camera className="w-5 h-5 text-slate-500 shrink-0" />
+                  <span className="text-xs font-semibold text-slate-600">
+                    Take Photo or Upload Receipt
+                  </span>
+                </button>
+              </div>
             )}
 
             {uploadStatus && (

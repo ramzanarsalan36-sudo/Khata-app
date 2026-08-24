@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useShop } from '@/lib/context/ShopContext';
 import { normalizePhoneNumber } from '@/lib/utils/phone';
@@ -27,7 +27,17 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  const profileInputRef = useRef(null);
+  const billInputRef = useRef(null);
   const supabase = createClient();
+
+  // Cleanup object URLs on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (profilePreview) URL.revokeObjectURL(profilePreview);
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+    };
+  }, [profilePreview, imagePreview]);
 
   const handlePhoneChange = (e) => {
     // Only allow digits up to 10 characters
@@ -36,13 +46,18 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
   };
 
   const handleProfilePhotoChange = (e) => {
+    e.stopPropagation();
     const file = e.target.files?.[0];
+    if (e.target) e.target.value = '';
+
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
       setError('Kripya valid profile photo select karein.');
       return;
     }
+
+    if (profilePreview) URL.revokeObjectURL(profilePreview);
 
     setProfileFile(file);
     setProfilePreview(URL.createObjectURL(file));
@@ -56,13 +71,18 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
   };
 
   const handleImageChange = (e) => {
+    e.stopPropagation();
     const file = e.target.files?.[0];
+    if (e.target) e.target.value = '';
+
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
       setError('Kripya valid bill image (photo) file select karein.');
       return;
     }
+
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
 
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
@@ -267,18 +287,23 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
               </div>
 
               {/* Upload or Camera Button Badge */}
-              <label
-                className="absolute bottom-0 right-0 p-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-full shadow-md cursor-pointer transition"
+              <input
+                ref={profileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleProfilePhotoChange}
+                onClick={(e) => e.stopPropagation()}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => profileInputRef.current?.click()}
+                className="absolute bottom-0 right-0 p-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-full shadow-md transition cursor-pointer"
                 title="Customer Profile Photo Dalein"
+                aria-label="Upload customer photo"
               >
                 <Camera className="w-3.5 h-3.5" />
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleProfilePhotoChange}
-                  className="hidden"
-                />
-              </label>
+              </button>
 
               {/* Remove profile photo button */}
               {profilePreview && (
@@ -287,6 +312,7 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
                   onClick={removeProfilePhoto}
                   className="absolute top-0 right-0 p-1 bg-rose-600 hover:bg-rose-700 text-white rounded-full shadow-sm transition"
                   title="Remove Profile Photo"
+                  aria-label="Remove profile photo"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -408,25 +434,35 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
                   <button
                     type="button"
                     onClick={removeImage}
-                    className="absolute top-1 right-1 bg-rose-600 text-white rounded-full p-1 shadow-sm hover:bg-rose-700 transition"
+                    className="absolute top-1 right-1 bg-rose-600 hover:bg-rose-700 text-white rounded-full p-1 shadow-sm transition"
+                    title="Remove Receipt"
+                    aria-label="Remove receipt photo"
                   >
                     <X className="w-3 h-3" />
                   </button>
                 </div>
               ) : (
-                <label className="flex items-center gap-2 p-2.5 bg-white hover:bg-slate-100/80 border border-dashed border-slate-300 rounded-xl cursor-pointer transition">
-                  <Camera className="w-4 h-4 text-slate-500" />
-                  <span className="text-xs font-semibold text-slate-600">
-                    Purana Parcha / Bill Photo Jodein
-                  </span>
+                <div>
                   <input
+                    ref={billInputRef}
                     type="file"
                     accept="image/*"
                     capture="environment"
                     onChange={handleImageChange}
+                    onClick={(e) => e.stopPropagation()}
                     className="hidden"
                   />
-                </label>
+                  <button
+                    type="button"
+                    onClick={() => billInputRef.current?.click()}
+                    className="w-full flex items-center gap-2 p-2.5 bg-white hover:bg-slate-100/80 border border-dashed border-slate-300 rounded-xl cursor-pointer transition text-left"
+                  >
+                    <Camera className="w-4 h-4 text-slate-500 shrink-0" />
+                    <span className="text-xs font-semibold text-slate-600">
+                      Purana Parcha / Bill Photo Jodein
+                    </span>
+                  </button>
+                </div>
               )}
 
               {uploadStatus && (

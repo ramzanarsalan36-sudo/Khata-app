@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Phone, BellRing, FileDown, AlertCircle, ArrowUpRight, ArrowDownLeft, Camera, Loader2, User, UserCog } from 'lucide-react';
 import { FaWhatsapp } from 'react-icons/fa';
@@ -25,13 +25,17 @@ export default function CustomerHeader({
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const photoInputRef = useRef(null);
 
   const supabase = createClient();
   const balanceInfo = getBalanceInfo(customer.balance);
   const normalizedPhone = normalizeIndianPhoneNumber(customer.phone);
 
   const handlePhotoUpload = async (e) => {
+    e.stopPropagation();
     const file = e.target.files?.[0];
+    if (e.target) e.target.value = '';
+
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
@@ -66,15 +70,19 @@ export default function CustomerHeader({
       const newPhotoUrl = publicUrlData?.publicUrl;
 
       // 4. Update customer record in database
-      const { error: updateError } = await supabase
+      const { data: updatedCustomer, error: updateError } = await supabase
         .from('customers')
         .update({ photo_url: newPhotoUrl, updated_at: new Date().toISOString() })
-        .eq('id', customer.id);
+        .eq('id', customer.id)
+        .select()
+        .single();
 
       if (updateError) throw updateError;
 
       setPhotoUrl(newPhotoUrl);
-      customer.photo_url = newPhotoUrl;
+      if (onCustomerUpdated && updatedCustomer) {
+        onCustomerUpdated(updatedCustomer);
+      }
     } catch (err) {
       console.error('Error updating customer photo:', err);
       setErrorMessage('Photo upload karne me truti hui: ' + (err.message || 'Please try again.'));
@@ -262,23 +270,29 @@ export default function CustomerHeader({
               </div>
             )}
 
-            <label
-              className="absolute -bottom-1.5 -right-1.5 p-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-full shadow-md cursor-pointer transition"
+            <input
+              ref={photoInputRef}
+              type="file"
+              accept="image/*"
+              disabled={uploadingPhoto}
+              onChange={handlePhotoUpload}
+              onClick={(e) => e.stopPropagation()}
+              className="hidden"
+            />
+            <button
+              type="button"
+              disabled={uploadingPhoto}
+              onClick={() => photoInputRef.current?.click()}
+              className="absolute -bottom-1.5 -right-1.5 p-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-full shadow-md cursor-pointer transition disabled:opacity-60"
               title="Customer Photo Badlein ya Jodein"
+              aria-label="Change customer photo"
             >
               {uploadingPhoto ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <Camera className="w-3.5 h-3.5" />
               )}
-              <input
-                type="file"
-                accept="image/*"
-                disabled={uploadingPhoto}
-                onChange={handlePhotoUpload}
-                className="hidden"
-              />
-            </label>
+            </button>
           </div>
 
           <div className="min-w-0 flex-1">

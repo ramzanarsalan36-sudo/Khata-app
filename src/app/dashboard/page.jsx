@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import SummaryCards from '@/components/dashboard/SummaryCards';
 import CustomerList from '@/components/dashboard/CustomerList';
 import AddCustomerModal from '@/components/dashboard/AddCustomerModal';
+import AddCustomerFAB from '@/components/common/AddCustomerFAB';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 
 export default function DashboardPage() {
@@ -129,7 +130,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="flex-1 flex flex-col relative">
       {/* Financial Summary Top Card */}
       <SummaryCards
         totalUdhaar={Number(stats.total_udhaar || 0)}
@@ -146,6 +147,9 @@ export default function DashboardPage() {
         onAddCustomerClick={() => setShowAddModal(true)}
       />
 
+      {/* Single Source of Truth Floating Action Button */}
+      <AddCustomerFAB onClick={() => setShowAddModal(true)} />
+
       {/* Add Customer Modal */}
       {showAddModal && (
         <AddCustomerModal
@@ -156,3 +160,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+
