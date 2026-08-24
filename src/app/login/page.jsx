@@ -29,9 +29,13 @@ export default function LoginPage() {
 
     try {
       if (isSignUp) {
+        const redirectOrigin = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000');
         const { error: signUpError } = await supabase.auth.signUp({
           email: email.trim(),
           password,
+          options: {
+            emailRedirectTo: `${redirectOrigin}/dashboard`,
+          },
         });
         if (signUpError) throw signUpError;
         setMessage('Account created! Logging you in...');
