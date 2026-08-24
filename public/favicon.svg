@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="storeBg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#00a86b" />
+      <stop offset="100%" stop-color="#008855" />
+    </linearGradient>
+    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#004d33" flood-opacity="0.25" />
+    </filter>
+  </defs>
+
+  <!-- Green Squircle Background -->
+  <rect width="512" height="512" rx="128" fill="url(#storeBg)" />
+
+  <!-- White Store Icon Group -->
+  <g fill="none" stroke="#ffffff" stroke-width="32" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Top Roof Trapezoid -->
+    <path d="M192 168 L320 168 L368 224 L144 224 Z" stroke-width="32" />
+
+    <!-- Awning Scalloped Bottom Border -->
+    <path d="M144 224 C144 246 168 246 168 224 C168 246 212 246 212 224 C212 246 256 246 256 224 C256 246 300 246 300 224 C300 246 344 246 344 224 C344 246 368 246 368 224" stroke-width="30" fill="#ffffff" fill-opacity="0.1" />
+
+    <!-- Store Walls Body -->
+    <path d="M168 248 L168 344 C168 362 182 376 200 376 L312 376 C330 376 344 362 344 344 L344 248" stroke-width="32" />
+
+    <!-- Center Arched Door -->
+    <path d="M228 376 L228 320 C228 304 284 304 284 320 L284 376" stroke-width="30" />
+  </g>
+</svg>

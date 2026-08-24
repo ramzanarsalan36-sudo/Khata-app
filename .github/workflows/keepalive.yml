@@ -1,0 +1,23 @@
+name: Supabase Health Keep-Alive
+
+on:
+  schedule:
+    # Run once every 5 days at midnight UTC to prevent inactivity pause
+    - cron: '0 0 */5 * *'
+  workflow_dispatch:
+
+jobs:
+  ping-supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase Database Health
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "Secrets not configured, skipping keep-alive ping."
+            exit 0
+          fi
+          echo "Pinging Supabase REST endpoint for liveness..."
+          curl -f -s -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" "$SUPABASE_URL/rest/v1/" > /dev/null || echo "Ping completed"
