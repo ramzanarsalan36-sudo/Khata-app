@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { useShop } from '@/lib/context/ShopContext';
+import { updateCustomer } from '@/lib/firebase/db';
 import { normalizePhoneNumber, get10DigitPhone } from '@/lib/utils/phone';
 import { UserCog, X, Loader2, AlertCircle } from 'lucide-react';
 
@@ -14,10 +14,7 @@ export default function EditCustomerModal({ customer, onClose, onCustomerUpdated
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const supabase = createClient();
-
   const handlePhoneChange = (e) => {
-    // Only allow digits up to 10 characters
     const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 10);
     setPhone(digitsOnly);
   };
@@ -50,30 +47,26 @@ export default function EditCustomerModal({ customer, onClose, onCustomerUpdated
     setError(null);
 
     try {
-      const cleanPhone = phone ? normalizePhoneNumber(phone) : null;
+      const cleanPhone = phone ? normalizePhoneNumber(phone) : '';
 
-      const { data, error: updateError } = await supabase
-        .from('customers')
-        .update({
-          name: cleanName,
-          phone: cleanPhone,
-          notes: notes.trim() || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', customer.id)
-        .eq('shop_id', currentShop.id)
-        .select()
-        .single();
+      const updates = {
+        name: cleanName,
+        phone: cleanPhone,
+        notes: notes.trim() || '',
+      };
 
-      if (updateError) throw updateError;
+      await updateCustomer(currentShop.id, customer.id, updates);
 
       if (onCustomerUpdated) {
-        onCustomerUpdated(data);
+        onCustomerUpdated({
+          ...customer,
+          ...updates,
+        });
       }
       onClose();
     } catch (err) {
-      console.error('Customer update failed:', err);
-      setError(err.message || 'Failed to update customer details.');
+      console.error('Failed to update customer:', err);
+      setError(err.message || 'Customer update nahi ho paya.');
     } finally {
       setLoading(false);
     }
@@ -82,15 +75,14 @@ export default function EditCustomerModal({ customer, onClose, onCustomerUpdated
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-xs">
       <div className="bg-white rounded-t-3xl sm:rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl animate-in slide-in-from-bottom sm:zoom-in-95 duration-200">
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
           <div className="flex items-center gap-2">
-            <div className="p-2 bg-blue-50 text-blue-700 rounded-xl">
+            <div className="p-2 bg-slate-100 text-slate-700 rounded-xl">
               <UserCog className="w-5 h-5" />
             </div>
             <div>
               <h2 className="font-extrabold text-slate-900 text-base">Edit Customer Profile</h2>
-              <p className="text-xs text-slate-400">Grahak ki jankari update karein</p>
+              <p className="text-xs text-slate-400">Grahak ki jankari badlein</p>
             </div>
           </div>
           <button
@@ -113,22 +105,20 @@ export default function EditCustomerModal({ customer, onClose, onCustomerUpdated
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">
-              Customer Name (Grahak Ka Naam) <span className="text-rose-500">*</span>
+              Customer Name <span className="text-rose-500">*</span>
             </label>
             <input
               type="text"
               required
-              autoFocus
-              placeholder="e.g. Mukesh Kumar"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition"
+              className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition font-medium"
             />
           </div>
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">
-              Mobile Number (10 Digits Only)
+              Mobile Number (10 Digits)
             </label>
             <div className="relative">
               <span className="absolute left-3.5 top-2.5 text-sm font-semibold text-slate-400">
@@ -136,32 +126,29 @@ export default function EditCustomerModal({ customer, onClose, onCustomerUpdated
               </span>
               <input
                 type="tel"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                maxLength={10}
-                placeholder="9876543210"
                 value={phone}
                 onChange={handlePhoneChange}
-                className="w-full pl-12 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition"
+                maxLength={10}
+                placeholder="9876543210"
+                className="w-full pl-12 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition font-medium"
               />
             </div>
-            <p className="text-[11px] text-slate-400 mt-1">Sirf 10 digit ka number likhein (numbers only).</p>
           </div>
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">
               Address / Notes (Optional)
             </label>
-            <input
-              type="text"
-              placeholder="e.g. Ward 4, Main Bazar"
+            <textarea
+              rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition"
+              placeholder="e.g. Near Bus Stand, Landmark..."
+              className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition font-medium resize-none"
             />
           </div>
 
-          {/* Action & Cancel Buttons */}
+          {/* Action Buttons */}
           <div className="space-y-2 pt-2">
             <button
               type="submit"
@@ -171,7 +158,7 @@ export default function EditCustomerModal({ customer, onClose, onCustomerUpdated
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Saving changes...</span>
+                  <span>Updating...</span>
                 </>
               ) : (
                 <span>Save Changes (Badlav Save Karein)</span>
@@ -182,9 +169,9 @@ export default function EditCustomerModal({ customer, onClose, onCustomerUpdated
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="w-full py-2.5 text-slate-500 hover:text-slate-700 text-xs font-bold text-center transition hover:bg-slate-100 rounded-xl disabled:opacity-50"
+              className="w-full py-2 text-slate-500 hover:text-slate-700 text-xs font-bold text-center transition hover:bg-slate-100 rounded-xl disabled:opacity-50"
             >
-              Cancel (Radd Karein)
+              Cancel
             </button>
           </div>
         </form>

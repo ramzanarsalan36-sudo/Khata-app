@@ -8,7 +8,7 @@ import { getBalanceInfo } from '@/lib/utils/currency';
 import { formatIndianPhoneNumber, normalizeIndianPhoneNumber } from '@/lib/utils/phone';
 import { buildCustomerBalanceWhatsAppMessage, generateWhatsAppUrl } from '@/lib/utils/whatsapp';
 import { useShop } from '@/lib/context/ShopContext';
-import { createClient } from '@/lib/supabase/client';
+import { uploadReceipt, updateCustomer } from '@/lib/firebase/db';
 import { compressProfileImage } from '@/lib/utils/imageCompression';
 import EditCustomerModal from '@/components/customer/EditCustomerModal';
 
@@ -27,7 +27,6 @@ export default function CustomerHeader({
   const [showEditModal, setShowEditModal] = useState(false);
   const photoInputRef = useRef(null);
 
-  const supabase = createClient();
   const balanceInfo = getBalanceInfo(customer.balance);
   const normalizedPhone = normalizeIndianPhoneNumber(customer.phone);
 
@@ -49,39 +48,26 @@ export default function CustomerHeader({
       // 1. Compress image client-side (~80KB target)
       const compressedFile = await compressProfileImage(file);
 
-      // 2. Upload to customer-photos bucket
-      const fileExt = compressedFile.name ? compressedFile.name.split('.').pop() : 'jpg';
-      const fileName = `${currentShop.id}/${customer.id}_${Date.now()}.${fileExt}`;
+      // 2. Upload to Firebase Storage or Base64 fallback
+      const uploadRes = await uploadReceipt({
+        shopId: currentShop.id,
+        customerId: `profiles/${customer.id}`,
+        file: compressedFile,
+      });
 
-      const { error: uploadError } = await supabase.storage
-        .from('customer-photos')
-        .upload(fileName, compressedFile, {
-          contentType: 'image/jpeg',
-          upsert: true,
-        });
+      const newPhotoUrl = uploadRes?.billUrl;
 
-      if (uploadError) throw uploadError;
-
-      // 3. Get Public URL
-      const { data: publicUrlData } = supabase.storage
-        .from('customer-photos')
-        .getPublicUrl(fileName);
-
-      const newPhotoUrl = publicUrlData?.publicUrl;
-
-      // 4. Update customer record in database
-      const { data: updatedCustomer, error: updateError } = await supabase
-        .from('customers')
-        .update({ photo_url: newPhotoUrl, updated_at: new Date().toISOString() })
-        .eq('id', customer.id)
-        .select()
-        .single();
-
-      if (updateError) throw updateError;
+      // 3. Update customer record in Firebase Realtime Database
+      await updateCustomer(currentShop.id, customer.id, {
+        photo_url: newPhotoUrl,
+      });
 
       setPhotoUrl(newPhotoUrl);
-      if (onCustomerUpdated && updatedCustomer) {
-        onCustomerUpdated(updatedCustomer);
+      if (onCustomerUpdated) {
+        onCustomerUpdated({
+          ...customer,
+          photo_url: newPhotoUrl,
+        });
       }
     } catch (err) {
       console.error('Error updating customer photo:', err);
@@ -112,307 +98,198 @@ export default function CustomerHeader({
   };
 
   return (
-    <div className="w-full">
-      {/* Phone validation alert if any */}
+    <div className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 shadow-xs">
       {errorMessage && (
-        <div className="mb-3 p-3 bg-rose-600 text-white text-xs font-semibold rounded-2xl flex items-center gap-2 animate-in fade-in duration-200">
+        <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold rounded-2xl flex items-center gap-2 shadow-xs animate-in fade-in duration-200">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span>{errorMessage}</span>
         </div>
       )}
 
-      {/* Mobile Top Header (< 1024px) */}
-      <div className="lg:hidden bg-emerald-700 text-white p-4 rounded-2xl shadow-md mb-4 sticky top-0 z-30">
-        <div className="flex items-center justify-between mb-3">
-          <Link
-            href="/dashboard"
-            className="flex items-center gap-1.5 text-xs font-semibold text-emerald-100 hover:text-white transition p-1 -ml-1 rounded-lg"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Back to Khata</span>
-          </Link>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowEditModal(true)}
-              title="Edit Customer Profile"
-              className="p-2 bg-emerald-800/80 hover:bg-emerald-800 text-emerald-100 hover:text-white rounded-lg border border-emerald-600/60 transition min-w-[36px] min-h-[36px] flex items-center justify-center"
-            >
-              <UserCog className="w-4 h-4" />
-            </button>
-
-            {onDownloadStatement && (
-              <button
-                onClick={onDownloadStatement}
-                title="Download Statement CSV"
-                className="p-2 bg-emerald-800/80 hover:bg-emerald-800 text-emerald-100 hover:text-white rounded-lg border border-emerald-600/60 transition min-w-[36px] min-h-[36px] flex items-center justify-center"
-              >
-                <FileDown className="w-4 h-4" />
-              </button>
-            )}
-
-            {customer.balance > 0 && onReminderClick && (
-              <button
-                onClick={onReminderClick}
-                title="Send Payment Reminder"
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg shadow-xs transition active:scale-95 min-h-[36px]"
-              >
-                <BellRing className="w-3.5 h-3.5" />
-                <span>Reminder</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Customer Info and Quick Contact */}
-        <div className="flex items-center justify-between mb-3.5">
-          <div className="flex items-center gap-3 min-w-0 pr-2">
-            {photoUrl ? (
-              <img
-                src={photoUrl}
-                alt={customer.name}
-                className="w-12 h-12 rounded-xl object-cover border-2 border-emerald-300 shadow-xs shrink-0"
-              />
-            ) : (
-              <div className="w-12 h-12 rounded-xl bg-emerald-800 text-emerald-100 font-extrabold text-base flex items-center justify-center border border-emerald-600 shrink-0 uppercase">
-                {customer.name.charAt(0)}
-              </div>
-            )}
-            <div className="min-w-0">
-              <h1 className="text-lg font-bold text-white leading-tight truncate">
-                {customer.name}
-              </h1>
-              <p className="text-xs text-emerald-100 mt-0.5 font-medium">
-                {customer.phone ? formatIndianPhoneNumber(customer.phone) : 'No phone number'}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {customer.phone && (
-              <a
-                href={`tel:${customer.phone}`}
-                className="w-11 h-11 rounded-full bg-emerald-800 hover:bg-emerald-900 border border-emerald-600 flex items-center justify-center text-white transition shadow-sm active:scale-95"
-                title="Call Customer"
-                aria-label={`Call ${customer.name}`}
-              >
-                <Phone className="w-4 h-4" />
-              </a>
-            )}
-
-            {waUrl ? (
-              <a
-                href={waUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={handleWhatsAppClick}
-                className="w-11 h-11 rounded-full bg-[#25D366] hover:bg-[#20ba5c] text-white flex items-center justify-center transition shadow-md active:scale-95 border border-emerald-400"
-                title="Send WhatsApp Message"
-                aria-label="Send WhatsApp message to customer"
-              >
-                <FaWhatsapp className="w-6 h-6" />
-              </a>
-            ) : (
-              <button
-                type="button"
-                onClick={handleWhatsAppClick}
-                className="w-11 h-11 rounded-full bg-[#25D366]/60 hover:bg-[#25D366] text-white flex items-center justify-center transition shadow-md active:scale-95 border border-emerald-400"
-                title="Send WhatsApp Message"
-                aria-label="Send WhatsApp message to customer"
-              >
-                <FaWhatsapp className="w-6 h-6" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Prominent Balance Banner */}
-        <div className="bg-white rounded-xl p-3.5 text-slate-800 shadow-sm border border-emerald-100 flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-              Current Net Balance
-            </span>
-            <div className={`text-2xl font-extrabold tracking-tight mt-0.5 ${balanceInfo.colorClass}`}>
-              {balanceInfo.formattedAmount}
-            </div>
-          </div>
-
-          <div className={`px-3 py-1 rounded-full text-xs font-bold border ${balanceInfo.badgeClass}`}>
-            {balanceInfo.label}
-          </div>
-        </div>
-      </div>
-
-      {/* Desktop Left Profile & Action Card (>= 1024px) */}
-      <div className="hidden lg:block bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sticky top-20">
-        {/* Back Link */}
+      {/* Top Bar with Back, Title & Edit Button */}
+      <div className="flex items-center justify-between mb-4">
         <Link
           href="/dashboard"
-          className="inline-flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-emerald-700 transition mb-4"
+          className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 transition py-1 px-2 -ml-2 rounded-xl hover:bg-slate-100"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Back to Customers List</span>
+          <span>Back to Dashboard</span>
         </Link>
 
-        {/* Customer Info Header */}
-        <div className="flex items-center gap-3.5 mb-5 pb-5 border-b border-slate-100">
-          {/* Avatar with Camera upload button */}
-          <div className="relative group shrink-0">
-            {photoUrl ? (
-              <img
-                src={photoUrl}
-                alt={customer.name}
-                className="w-16 h-16 rounded-2xl object-cover border border-slate-200 shadow-xs"
-              />
-            ) : (
-              <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-800 font-black text-2xl flex items-center justify-center border border-emerald-200 uppercase">
-                {customer.name.charAt(0)}
-              </div>
-            )}
+        <button
+          onClick={() => setShowEditModal(true)}
+          className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-emerald-700 transition py-1.5 px-3 rounded-xl bg-slate-100 hover:bg-emerald-50 border border-slate-200/60"
+        >
+          <UserCog className="w-3.5 h-3.5" />
+          <span>Edit Grahak</span>
+        </button>
+      </div>
 
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+        {/* Customer Profile & Info */}
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="relative group shrink-0">
+            <div className="w-14 h-14 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-slate-700 text-xl overflow-hidden shadow-inner">
+              {photoUrl ? (
+                <img
+                  src={photoUrl}
+                  alt={customer.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <span>{customer.name?.charAt(0)?.toUpperCase() || '?'}</span>
+              )}
+            </div>
+
+            {/* Photo Upload Camera Badge */}
             <input
               ref={photoInputRef}
               type="file"
               accept="image/*"
-              disabled={uploadingPhoto}
               onChange={handlePhotoUpload}
               onClick={(e) => e.stopPropagation()}
               className="hidden"
             />
             <button
-              type="button"
-              disabled={uploadingPhoto}
               onClick={() => photoInputRef.current?.click()}
-              className="absolute -bottom-1.5 -right-1.5 p-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-full shadow-md cursor-pointer transition disabled:opacity-60"
-              title="Customer Photo Badlein ya Jodein"
-              aria-label="Change customer photo"
+              disabled={uploadingPhoto}
+              className="absolute -bottom-1 -right-1 p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full shadow-md transition disabled:opacity-50 cursor-pointer"
+              title="Change Customer Photo"
+              aria-label="Upload photo"
             >
               {uploadingPhoto ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <Loader2 className="w-3 h-3 animate-spin" />
               ) : (
-                <Camera className="w-3.5 h-3.5" />
+                <Camera className="w-3 h-3" />
               )}
             </button>
           </div>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between">
-              <h1 className="text-xl font-extrabold text-slate-900 leading-tight truncate">
-                {customer.name}
-              </h1>
-              <button
-                onClick={() => setShowEditModal(true)}
-                title="Edit Customer Profile"
-                className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
-              >
-                <UserCog className="w-4 h-4" />
-              </button>
+          <div className="min-w-0">
+            <h1 className="font-extrabold text-lg sm:text-xl text-slate-900 truncate">
+              {customer.name}
+            </h1>
+            <div className="flex flex-wrap items-center gap-2 mt-0.5 text-xs text-slate-500">
+              {customer.phone ? (
+                <a
+                  href={`tel:${customer.phone}`}
+                  className="inline-flex items-center gap-1 font-semibold text-slate-700 hover:text-emerald-700"
+                >
+                  <Phone className="w-3 h-3 text-slate-400" />
+                  <span>{formatIndianPhoneNumber(customer.phone)}</span>
+                </a>
+              ) : (
+                <span className="text-slate-400">No phone added</span>
+              )}
+
+              {customer.notes && (
+                <span className="text-slate-400 truncate max-w-[200px]">
+                  • {customer.notes}
+                </span>
+              )}
             </div>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">
-              {customer.phone ? formatIndianPhoneNumber(customer.phone) : 'No phone number added'}
-            </p>
-            {customer.notes && (
-              <p className="text-xs text-slate-400 mt-1 truncate">{customer.notes}</p>
-            )}
           </div>
         </div>
 
-        {/* Balance Showcase Box */}
-        <div className={`p-5 rounded-2xl border mb-5 ${balanceInfo.bgClass}`}>
-          <span className="text-xs font-bold uppercase tracking-wider text-slate-600 block">
-            Current Net Balance
+        {/* Current Balance Card */}
+        <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center p-3 sm:p-0 bg-slate-50 sm:bg-transparent rounded-2xl border sm:border-0 border-slate-200/60">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+            Current Balance
           </span>
-          <div className={`text-3xl font-black tracking-tight mt-1 ${balanceInfo.colorClass}`}>
-            {balanceInfo.formattedAmount}
-          </div>
-          <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-200/60">
-            <span className="text-xs font-semibold text-slate-600">{balanceInfo.subLabel}</span>
-            <span className={`px-3 py-1 rounded-full text-xs font-extrabold border ${balanceInfo.badgeClass}`}>
-              {balanceInfo.label}
+          <div className="flex items-baseline gap-2">
+            <span
+              className={`text-xl sm:text-2xl font-black ${
+                balanceInfo.badgeColor === 'red'
+                  ? 'text-rose-600'
+                  : balanceInfo.badgeColor === 'green'
+                  ? 'text-emerald-600'
+                  : 'text-slate-600'
+              }`}
+            >
+              ₹{balanceInfo.formattedAbsolute}
+            </span>
+            <span
+              className={`text-[10px] uppercase font-extrabold px-2 py-0.5 rounded-full ${
+                balanceInfo.badgeColor === 'red'
+                  ? 'bg-rose-100 text-rose-700'
+                  : balanceInfo.badgeColor === 'green'
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : 'bg-slate-200 text-slate-700'
+              }`}
+            >
+              {balanceInfo.statusLabel}
             </span>
           </div>
         </div>
+      </div>
 
-        {/* Primary Desktop BAKI & JAMA Action Buttons */}
-        <div className="grid grid-cols-2 gap-3 mb-5">
-          <button
-            onClick={onOpenGave}
-            className="py-3 px-4 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-rose-600/20 transition active:scale-98"
-          >
-            <ArrowUpRight className="w-4 h-4 stroke-[2.5]" />
-            <span>BAKI ₹ (DIYA)</span>
-          </button>
-
-          <button
-            onClick={onOpenGot}
-            className="py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition active:scale-98"
-          >
-            <ArrowDownLeft className="w-4 h-4 stroke-[2.5]" />
-            <span>JAMA ₹ (LIYA)</span>
-          </button>
-        </div>
-
-        {/* Customer Contact & Statement Actions */}
-        <div className="space-y-2.5">
-          <button
-            onClick={() => setShowEditModal(true)}
-            className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition"
-          >
-            <UserCog className="w-4 h-4 text-slate-500" />
-            <span>Edit Profile & Phone</span>
-          </button>
-
+      {/* Action Bar (WhatsApp, Call, Reminder, Statement CSV) */}
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-3">
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+          {/* WhatsApp Direct Message */}
           {waUrl ? (
             <a
               href={waUrl}
               target="_blank"
               rel="noopener noreferrer"
               onClick={handleWhatsAppClick}
-              className="w-full py-2.5 px-4 bg-[#25D366] hover:bg-[#20ba5c] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-xs transition active:scale-98"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl border border-emerald-200 transition active:scale-95 shadow-2xs"
             >
-              <FaWhatsapp className="w-4 h-4" />
-              <span>Send WhatsApp Balance</span>
+              <FaWhatsapp className="w-4 h-4 text-emerald-600" />
+              <span>WhatsApp Hisab</span>
             </a>
-          ) : (
-            <button
-              type="button"
-              onClick={handleWhatsAppClick}
-              className="w-full py-2.5 px-4 bg-[#25D366] hover:bg-[#20ba5c] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-xs transition active:scale-98"
-            >
-              <FaWhatsapp className="w-4 h-4" />
-              <span>Send WhatsApp Balance</span>
-            </button>
-          )}
+          ) : null}
 
+          {/* Direct Phone Call */}
           {customer.phone && (
             <a
               href={`tel:${customer.phone}`}
-              className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition"
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition"
             >
-              <Phone className="w-3.5 h-3.5 text-slate-500" />
-              <span>Call Customer</span>
+              <Phone className="w-3.5 h-3.5" />
+              <span>Call</span>
             </a>
           )}
 
-          {customer.balance > 0 && onReminderClick && (
+          {/* Payment Reminder Generator */}
+          {Number(customer.balance) > 0 && (
             <button
               onClick={onReminderClick}
-              className="w-full py-2.5 px-4 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition"
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold text-xs rounded-xl border border-amber-200 transition"
             >
-              <BellRing className="w-3.5 h-3.5" />
-              <span>Send Payment Reminder</span>
+              <BellRing className="w-3.5 h-3.5 text-amber-600" />
+              <span>Send Reminder</span>
             </button>
           )}
 
-          {onDownloadStatement && (
-            <button
-              onClick={onDownloadStatement}
-              className="w-full py-2.5 px-4 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition"
-            >
-              <FileDown className="w-3.5 h-3.5" />
-              <span>Download Statement (CSV)</span>
-            </button>
-          )}
+          {/* Download CSV Statement */}
+          <button
+            onClick={onDownloadStatement}
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition"
+            title="Download Customer Statement (Excel/CSV)"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Statement CSV</span>
+          </button>
+        </div>
+
+        {/* Desktop Quick Gave / Got Buttons */}
+        <div className="hidden lg:flex items-center gap-2">
+          <button
+            onClick={onOpenGave}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition active:scale-95"
+          >
+            <ArrowUpRight className="w-3.5 h-3.5" />
+            <span>Maine Diye (₹)</span>
+          </button>
+
+          <button
+            onClick={onOpenGot}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition active:scale-95"
+          >
+            <ArrowDownLeft className="w-3.5 h-3.5" />
+            <span>Mujhe Mile (₹)</span>
+          </button>
         </div>
       </div>
 
@@ -423,6 +300,7 @@ export default function CustomerHeader({
           onClose={() => setShowEditModal(false)}
           onCustomerUpdated={(updated) => {
             if (onCustomerUpdated) onCustomerUpdated(updated);
+            setShowEditModal(false);
           }}
         />
       )}

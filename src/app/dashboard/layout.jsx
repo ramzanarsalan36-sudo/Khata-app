@@ -11,7 +11,7 @@ import { useShop } from '@/lib/context/ShopContext';
 export default function DashboardLayout({ children }) {
   const { currentShop, shops, loading } = useShop();
 
-  if (loading) {
+  if (loading && !currentShop) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <LoadingSpinner size="lg" text="Loading your Khata..." />
@@ -19,7 +19,7 @@ export default function DashboardLayout({ children }) {
     );
   }
 
-  // If user is authenticated but hasn't created or joined any shop yet
+  // If user hasn't created or joined any shop yet
   if (!loading && (!shops || shops.length === 0)) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">

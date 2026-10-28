@@ -1,7 +1,7 @@
 import imageCompression from 'browser-image-compression';
 
 /**
- * Compress bill receipt images before uploading to Supabase Storage
+ * Compress bill receipt images before uploading to Firebase Storage
  */
 export async function compressBillImage(imageFile, onProgress = null) {
   if (!imageFile) return null;
@@ -24,37 +24,30 @@ export async function compressBillImage(imageFile, onProgress = null) {
     const compressedFile = await imageCompression(imageFile, options);
     return compressedFile;
   } catch (error) {
-    console.warn('Image compression fallback to original file:', error);
+    console.error('Bill image compression error, using original file:', error);
     return imageFile;
   }
 }
 
 /**
- * Compress profile / avatar images before uploading
+ * Compress customer profile photos (~80KB target)
  */
-export async function compressProfileImage(imageFile, onProgress = null) {
+export async function compressProfileImage(imageFile) {
   if (!imageFile) return null;
 
-  // Options for profile photos - super lightweight ~50-80 KB, square dimension friendly
   const options = {
     maxSizeMB: 0.08, // Target max ~80 KB
-    maxWidthOrHeight: 512, // Crisp on retina displays while very small
+    maxWidthOrHeight: 512, // Square profile avatar size
     useWebWorker: true,
     fileType: 'image/jpeg',
     initialQuality: 0.8,
-    onProgress: (progress) => {
-      if (onProgress && typeof onProgress === 'function') {
-        onProgress(progress);
-      }
-    },
   };
 
   try {
     const compressedFile = await imageCompression(imageFile, options);
     return compressedFile;
   } catch (error) {
-    console.warn('Profile image compression fallback to original file:', error);
+    console.error('Profile image compression error, using original file:', error);
     return imageFile;
   }
 }
-

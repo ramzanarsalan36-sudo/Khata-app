@@ -1,40 +1,50 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { storage } from '@/lib/firebase/config';
+import { ref as storageRef, getDownloadURL } from 'firebase/storage';
 import { X, Download, Loader2, ImageOff } from 'lucide-react';
 
 export default function ReceiptViewerModal({ billPath, onClose }) {
-  const [signedUrl, setSignedUrl] = useState(null);
+  const [imageUrl, setImageUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const supabase = createClient();
-
   useEffect(() => {
     async function loadReceiptUrl() {
-      if (!billPath) return;
+      if (!billPath) {
+        setLoading(false);
+        return;
+      }
+
+      // 1. Direct URL (Data URI or HTTPS URL)
+      if (billPath.startsWith('http') || billPath.startsWith('data:')) {
+        setImageUrl(billPath);
+        setLoading(false);
+        return;
+      }
+
+      // 2. Firebase Storage Path
       try {
         setLoading(true);
         setError(null);
-
-        // Generate signed URL with 60 minute expiry
-        const { data, error: signError } = await supabase.storage
-          .from('bill-receipts')
-          .createSignedUrl(billPath, 3600);
-
-        if (signError) throw signError;
-        setSignedUrl(data.signedUrl);
+        if (storage) {
+          const fileRef = storageRef(storage, billPath);
+          const url = await getDownloadURL(fileRef);
+          setImageUrl(url);
+        } else {
+          setImageUrl(billPath);
+        }
       } catch (err) {
-        console.error('Error generating signed URL for receipt:', err);
-        setError('Unable to load receipt image.');
+        console.error('Error fetching receipt download URL:', err);
+        setError('Receipt photo load nahi ho payi.');
       } finally {
         setLoading(false);
       }
     }
 
     loadReceiptUrl();
-  }, [billPath, supabase]);
+  }, [billPath]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs">
@@ -42,9 +52,9 @@ export default function ReceiptViewerModal({ billPath, onClose }) {
         <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-3">
           <h3 className="font-bold text-sm text-slate-200">Bill / Receipt Photo</h3>
           <div className="flex items-center gap-2">
-            {signedUrl && (
+            {imageUrl && (
               <a
-                href={signedUrl}
+                href={imageUrl}
                 download="bill_receipt.jpg"
                 target="_blank"
                 rel="noopener noreferrer"
@@ -65,23 +75,22 @@ export default function ReceiptViewerModal({ billPath, onClose }) {
           </div>
         </div>
 
-        {/* Content Body */}
-        <div className="min-h-[300px] sm:min-h-[380px] flex items-center justify-center bg-black/40 rounded-2xl overflow-hidden p-2">
+        <div className="relative min-h-[300px] max-h-[70vh] flex items-center justify-center bg-slate-950/80 rounded-2xl overflow-hidden p-2">
           {loading ? (
-            <div className="flex flex-col items-center gap-2 text-slate-400">
-              <Loader2 className="w-7 h-7 animate-spin text-emerald-500" />
-              <span className="text-xs">Loading secure receipt...</span>
+            <div className="flex flex-col items-center justify-center gap-2 text-slate-400">
+              <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+              <p className="text-xs font-medium">Loading receipt photo...</p>
             </div>
-          ) : error ? (
-            <div className="flex flex-col items-center gap-2 text-rose-400 p-6 text-center">
-              <ImageOff className="w-10 h-10 opacity-60" />
-              <p className="text-xs font-semibold">{error}</p>
+          ) : error || !imageUrl ? (
+            <div className="flex flex-col items-center justify-center gap-2 text-slate-500 p-6 text-center">
+              <ImageOff className="w-10 h-10 stroke-1 text-slate-600" />
+              <p className="text-xs font-semibold">{error || 'Receipt photo not found'}</p>
             </div>
           ) : (
             <img
-              src={signedUrl}
-              alt="Bill Receipt"
-              className="max-h-[75vh] w-auto max-w-full object-contain rounded-xl shadow-lg"
+              src={imageUrl}
+              alt="Transaction Receipt"
+              className="w-full h-auto max-h-[65vh] object-contain rounded-xl"
             />
           )}
         </div>

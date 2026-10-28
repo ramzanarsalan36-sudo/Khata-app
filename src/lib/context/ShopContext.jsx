@@ -1,8 +1,12 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { useRouter } from 'next/navigation';
+import { auth } from '@/lib/firebase/config';
+import { onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
+import { subscribeUserShops, createShop as createShopDb } from '@/lib/firebase/db';
+import { useRouter, usePathname } from 'next/navigation';
+
+export const AUTHORIZED_UID = 'FNSMYvR9vhOcvFVPdfu6N7i1Lyc2';
 
 const ShopContext = createContext({
   user: null,
@@ -13,6 +17,7 @@ const ShopContext = createContext({
   switchShop: () => {},
   refreshShops: () => {},
   createShop: async () => {},
+  signOut: async () => {},
 });
 
 export function ShopProvider({ children }) {
@@ -21,105 +26,75 @@ export function ShopProvider({ children }) {
   const [currentShop, setCurrentShop] = useState(null);
   const [currentRole, setCurrentRole] = useState(null);
   const [loading, setLoading] = useState(true);
-  
-  const supabase = createClient();
+
   const router = useRouter();
+  const pathname = usePathname();
 
-  const loadUserAndShops = useCallback(async (isSilent = false) => {
-    try {
-      if (!isSilent) {
-        setLoading(true);
-      }
-      const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+  const handleShopsLoaded = useCallback((loadedShops) => {
+    setShops(loadedShops || []);
 
-      if (authError || !authUser) {
-        setUser(null);
-        setShops([]);
-        setCurrentShop(null);
-        setCurrentRole(null);
-        if (!isSilent) setLoading(false);
-        return;
-      }
+    const savedShopId = typeof window !== 'undefined' ? localStorage.getItem('khata_active_shop_id') : null;
+    let selected = (loadedShops || []).find((s) => s.id === savedShopId) || (loadedShops && loadedShops[0]) || null;
 
-      setUser(authUser);
+    setCurrentShop(selected);
+    setCurrentRole(selected ? selected.role : 'owner');
+    setLoading(false);
+  }, []);
 
-      // Fetch user's shops with roles
-      const { data: memberData, error: memberError } = await supabase
-        .from('shop_members')
-        .select(`
-          role,
-          created_at,
-          shop:shops (
-            id,
-            shop_name,
-            owner_name,
-            phone,
-            address,
-            is_active,
-            created_at
-          )
-        `)
-        .eq('user_id', authUser.id);
-
-      if (memberError) {
-        console.error('Error fetching shops:', memberError);
-        if (!isSilent) setLoading(false);
-        return;
-      }
-
-      const activeShops = (memberData || [])
-        .filter((item) => item.shop && item.shop.is_active)
-        .map((item) => ({
-          ...item.shop,
-          role: item.role,
-        }));
-
-      setShops(activeShops);
-
-      // Check saved shop in localStorage or default to first
-      const savedShopId = typeof window !== 'undefined' ? localStorage.getItem('khata_active_shop_id') : null;
-      let selected = activeShops.find((s) => s.id === savedShopId) || activeShops[0] || null;
-
-      setCurrentShop(selected);
-      setCurrentRole(selected ? selected.role : null);
-    } catch (err) {
-      console.error('Unexpected error loading shops:', err);
-    } finally {
-      if (!isSilent) {
-        setLoading(false);
-      }
-    }
-  }, [supabase]);
-
+  // Listen strictly to Firebase Auth
   useEffect(() => {
-    loadUserAndShops(false);
+    let unsubscribeShops = null;
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_IN') {
-        loadUserAndShops(true);
-      } else if (event === 'TOKEN_REFRESHED') {
-        // Silent update on token refresh so active modals and camera captures never unmount
-        loadUserAndShops(true);
-      } else if (event === 'SIGNED_OUT') {
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (authUser) => {
+      if (unsubscribeShops) unsubscribeShops();
+
+      if (authUser) {
+        // Strict UID Check: Only authorized UID can access
+        if (authUser.uid !== AUTHORIZED_UID) {
+          console.warn('Unauthorized user attempted login. Signing out.');
+          await firebaseSignOut(auth);
+          setUser(null);
+          setShops([]);
+          setCurrentShop(null);
+          setCurrentRole(null);
+          setLoading(false);
+          router.push('/login');
+          return;
+        }
+
+        setUser(authUser);
+        unsubscribeShops = subscribeUserShops(authUser.uid, handleShopsLoaded);
+      } else {
         setUser(null);
         setShops([]);
         setCurrentShop(null);
         setCurrentRole(null);
         setLoading(false);
-        router.push('/login');
+
+        // Protect dashboard and settings routes
+        const isProtected = pathname.startsWith('/dashboard') || pathname.startsWith('/settings');
+        if (isProtected) {
+          router.push('/login');
+        }
       }
     });
 
     return () => {
-      subscription?.unsubscribe();
+      unsubscribeAuth();
+      if (unsubscribeShops) unsubscribeShops();
     };
-  }, [loadUserAndShops, supabase, router]);
+  }, [handleShopsLoaded, pathname, router]);
 
   const switchShop = (shopId) => {
     const target = shops.find((s) => s.id === shopId);
     if (target) {
       setCurrentShop(target);
-      setCurrentRole(target.role);
+      setCurrentRole(target.role || 'owner');
       if (typeof window !== 'undefined') {
         localStorage.setItem('khata_active_shop_id', target.id);
       }
@@ -128,19 +103,45 @@ export function ShopProvider({ children }) {
 
   const createShop = async ({ shop_name, owner_name, phone, address }) => {
     try {
-      const { data, error } = await supabase.rpc('create_shop_with_owner', {
-        p_shop_name: shop_name,
-        p_owner_name: owner_name,
-        p_phone: phone || null,
-        p_address: address || null,
-      });
+      const uid = user?.uid || AUTHORIZED_UID;
+      const created = await createShopDb(
+        {
+          shop_name,
+          owner_name,
+          phone,
+          address,
+        },
+        uid
+      );
 
-      if (error) throw error;
-      await loadUserAndShops();
-      return { success: true, shop: data.shop };
+      setShops((prev) => [...prev, created]);
+      setCurrentShop(created);
+      setCurrentRole('owner');
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('khata_active_shop_id', created.id);
+      }
+      return { success: true, shop: created };
     } catch (err) {
       console.error('Failed to create shop:', err);
       return { success: false, error: err.message };
+    }
+  };
+
+  const signOut = async () => {
+    try {
+      if (auth) {
+        await firebaseSignOut(auth);
+      }
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('khata_active_shop_id');
+      }
+      setUser(null);
+      setShops([]);
+      setCurrentShop(null);
+      setCurrentRole(null);
+      router.push('/login');
+    } catch (err) {
+      console.error('Sign out failed:', err);
     }
   };
 
@@ -153,8 +154,9 @@ export function ShopProvider({ children }) {
         currentRole,
         loading,
         switchShop,
-        refreshShops: loadUserAndShops,
+        refreshShops: () => {},
         createShop,
+        signOut,
       }}
     >
       {children}

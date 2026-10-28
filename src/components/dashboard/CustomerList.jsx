@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import {
   Search,
@@ -20,31 +20,46 @@ import { getBalanceInfo, formatINR } from '@/lib/utils/currency';
 import { formatIndianPhoneNumber, normalizeIndianPhoneNumber } from '@/lib/utils/phone';
 import { buildCustomerBalanceWhatsAppMessage, generateWhatsAppUrl } from '@/lib/utils/whatsapp';
 import { useShop } from '@/lib/context/ShopContext';
-import { createClient } from '@/lib/supabase/client';
+import { subscribeShopCustomers } from '@/lib/firebase/db';
 import { formatDistanceToNow } from 'date-fns';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
 export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
   const { currentShop } = useShop();
-  const [customers, setCustomers] = useState([]);
-  const [totalCount, setTotalCount] = useState(0);
+  const [rawCustomers, setRawCustomers] = useState([]);
   const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
 
   // Search & Filter state
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filterType, setFilterType] = useState('ALL'); // 'ALL', 'UDHAAR', 'ADVANCE', 'SETTLED'
-  const [sortType, setSortType] = useState('updated_desc'); // 'updated_desc', 'name_asc', 'balance_desc', 'balance_asc'
+  const [sortType, setSortType] = useState('updated_desc'); // 'updated_desc', 'name_asc', 'name_desc', 'balance_desc', 'balance_asc'
   const [toastMessage, setToastMessage] = useState(null);
 
-  const supabase = createClient();
   const searchTimeoutRef = useRef(null);
 
-  // Debounce search input (350ms) to avoid spamming the database
+  // Real-time listener for customer updates from Firebase Realtime Database
+  useEffect(() => {
+    if (!currentShop?.id) {
+      setRawCustomers([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    const unsubscribe = subscribeShopCustomers(currentShop.id, (customersList) => {
+      setRawCustomers(customersList || []);
+      setLoading(false);
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [currentShop?.id]);
+
+  // Debounce search input (300ms)
   const handleSearchChange = (e) => {
     const value = e.target.value;
     setSearchInput(value);
@@ -53,7 +68,7 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
     searchTimeoutRef.current = setTimeout(() => {
       setDebouncedSearch(value);
       setPage(1);
-    }, 350);
+    }, 300);
   };
 
   const handleClearSearch = () => {
@@ -74,109 +89,58 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
     setPage(1);
   };
 
-  // Server-side customer data loader
-  const fetchCustomers = useCallback(async (targetPage = 1, isLoadMore = false) => {
-    if (!currentShop?.id) return;
+  // Filtered & Sorted Customer Pipeline
+  const filteredCustomers = useMemo(() => {
+    let result = [...rawCustomers];
 
-    if (isLoadMore) {
-      setLoadingMore(true);
-    } else {
-      setLoading(true);
+    // Search query
+    if (debouncedSearch.trim()) {
+      const q = debouncedSearch.trim().toLowerCase();
+      result = result.filter(
+        (c) =>
+          (c.name && c.name.toLowerCase().includes(q)) ||
+          (c.phone && c.phone.includes(q))
+      );
     }
 
-    try {
-      // 1. Try fetching via RPC get_customers_paginated
-      let rpcResult = null;
-      try {
-        const { data, error } = await supabase.rpc('get_customers_paginated', {
-          p_shop_id: currentShop.id,
-          p_page: targetPage,
-          p_page_size: PAGE_SIZE,
-          p_search: debouncedSearch.trim() || null,
-          p_filter: filterType,
-          p_sort: sortType,
-        });
-
-        if (!error && data) {
-          rpcResult = data;
-        }
-      } catch (rpcErr) {
-        console.warn('RPC get_customers_paginated fallback:', rpcErr);
-      }
-
-      if (rpcResult) {
-        const list = rpcResult.data || [];
-        setTotalCount(rpcResult.filtered_count ?? rpcResult.total_count ?? 0);
-        setHasMore(rpcResult.has_more ?? false);
-        setCustomers((prev) => (isLoadMore ? [...prev, ...list] : list));
-      } else {
-        // Fallback: Direct PostgreSQL filtered, sorted, paginated query with precise projection
-        const from = (targetPage - 1) * PAGE_SIZE;
-        const to = from + PAGE_SIZE - 1;
-
-        let query = supabase
-          .from('customers')
-          .select('id, name, phone, photo_url, notes, balance, created_at, updated_at', { count: 'exact' })
-          .eq('shop_id', currentShop.id)
-          .is('deleted_at', null);
-
-        // Search filter
-        if (debouncedSearch.trim()) {
-          const clean = debouncedSearch.trim();
-          query = query.or(`name.ilike.%${clean}%,phone.ilike.%${clean}%`);
-        }
-
-        // Financial filter
-        if (filterType === 'UDHAAR') {
-          query = query.gt('balance', 0);
-        } else if (filterType === 'ADVANCE') {
-          query = query.lt('balance', 0);
-        } else if (filterType === 'SETTLED') {
-          query = query.eq('balance', 0);
-        }
-
-        // Sorting
-        if (sortType === 'updated_desc') {
-          query = query.order('updated_at', { ascending: false });
-        } else if (sortType === 'name_asc') {
-          query = query.order('name', { ascending: true });
-        } else if (sortType === 'name_desc') {
-          query = query.order('name', { ascending: false });
-        } else if (sortType === 'balance_desc') {
-          query = query.order('balance', { ascending: false });
-        } else if (sortType === 'balance_asc') {
-          query = query.order('balance', { ascending: true });
-        }
-
-        query = query.range(from, to);
-
-        const { data, error, count } = await query;
-        if (error) throw error;
-
-        const list = data || [];
-        setTotalCount(count || 0);
-        setHasMore(list.length === PAGE_SIZE && from + list.length < (count || 0));
-        setCustomers((prev) => (isLoadMore ? [...prev, ...list] : list));
-      }
-    } catch (err) {
-      console.error('Error fetching customers:', err);
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
+    // Financial category filter
+    if (filterType === 'UDHAAR') {
+      result = result.filter((c) => Number(c.balance) > 0);
+    } else if (filterType === 'ADVANCE') {
+      result = result.filter((c) => Number(c.balance) < 0);
+    } else if (filterType === 'SETTLED') {
+      result = result.filter((c) => Number(c.balance) === 0);
     }
-  }, [currentShop?.id, debouncedSearch, filterType, sortType, supabase]);
 
-  // Refetch on filter, search, sort changes
-  useEffect(() => {
-    fetchCustomers(1, false);
-  }, [fetchCustomers]);
+    // Sorting
+    result.sort((a, b) => {
+      if (sortType === 'name_asc') {
+        return (a.name || '').localeCompare(b.name || '');
+      }
+      if (sortType === 'name_desc') {
+        return (b.name || '').localeCompare(a.name || '');
+      }
+      if (sortType === 'balance_desc') {
+        return Number(b.balance || 0) - Number(a.balance || 0);
+      }
+      if (sortType === 'balance_asc') {
+        return Number(a.balance || 0) - Number(b.balance || 0);
+      }
+      // default: updated_desc
+      return new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0);
+    });
 
-  // Load More handler (appends next page)
+    return result;
+  }, [rawCustomers, debouncedSearch, filterType, sortType]);
+
+  const visibleCustomers = useMemo(() => {
+    return filteredCustomers.slice(0, page * PAGE_SIZE);
+  }, [filteredCustomers, page]);
+
+  const hasMore = visibleCustomers.length < filteredCustomers.length;
+
   const handleLoadMore = () => {
-    if (loadingMore || !hasMore) return;
-    const nextPage = page + 1;
-    setPage(nextPage);
-    fetchCustomers(nextPage, true);
+    setPage((prev) => prev + 1);
   };
 
   const handleWhatsAppQuickClick = (e, customer) => {
@@ -213,7 +177,7 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Main Customer List Section (8 Cols on Desktop) */}
         <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden flex flex-col">
-          {/* Search, Filter & Desktop Top Action Header */}
+          {/* Search, Filter & Top Action Header */}
           <div className="p-4 border-b border-slate-200 bg-white sticky top-0 lg:static z-20 space-y-3">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
               <div className="relative flex-1">
@@ -247,7 +211,7 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  All ({filterType === 'ALL' ? totalCount : 'All'})
+                  All ({rawCustomers.length})
                 </button>
                 <button
                   onClick={() => handleFilterChange('UDHAAR')}
@@ -267,136 +231,147 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
                       : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60 hover:bg-emerald-100'
                   }`}
                 >
-                  Jama (Advance)
+                  Advance (Jama)
                 </button>
                 <button
                   onClick={() => handleFilterChange('SETTLED')}
                   className={`px-3.5 py-1.5 rounded-xl whitespace-nowrap transition ${
                     filterType === 'SETTLED'
-                      ? 'bg-slate-600 text-white shadow-xs font-bold'
+                      ? 'bg-slate-700 text-white shadow-xs font-bold'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  Settled
+                  Barabar
                 </button>
               </div>
 
               {/* Sort Dropdown */}
-              <div className="flex items-center gap-1.5 ml-auto text-xs text-slate-500">
+              <div className="flex items-center gap-1 text-xs text-slate-500 self-end sm:self-auto">
                 <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
                 <select
                   value={sortType}
                   onChange={(e) => handleSortChange(e.target.value)}
-                  aria-label="Sort customer list"
-                  className="bg-slate-100 hover:bg-slate-200 border-none text-xs font-semibold text-slate-700 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                  className="bg-transparent text-slate-700 font-semibold focus:outline-none cursor-pointer text-xs"
                 >
-                  <option value="updated_desc">Recently Active</option>
+                  <option value="updated_desc">Recent Activity</option>
                   <option value="balance_desc">Highest Udhaar</option>
                   <option value="balance_asc">Highest Advance</option>
-                  <option value="name_asc">Name (A to Z)</option>
-                  <option value="name_desc">Name (Z to A)</option>
+                  <option value="name_asc">Name (A-Z)</option>
+                  <option value="name_desc">Name (Z-A)</option>
                 </select>
               </div>
             </div>
           </div>
 
-          {/* Customer Cards List */}
-          <div className="divide-y divide-slate-100 min-h-[260px] flex flex-col justify-between">
+          {/* Customer Rows Content */}
+          <div className="flex-1 min-h-[300px]">
             {loading ? (
-              <div className="p-12 flex flex-col items-center justify-center text-slate-400 space-y-3">
-                <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
-                <p className="text-xs font-medium">Fetching matching customers...</p>
+              <div className="flex flex-col items-center justify-center p-12 text-slate-400">
+                <Loader2 className="w-8 h-8 animate-spin mb-2 text-emerald-600" />
+                <p className="text-xs">Loading realtime ledger records...</p>
               </div>
-            ) : customers.length === 0 ? (
-              <div className="p-12 text-center flex flex-col items-center justify-center text-slate-500 flex-1">
-                {debouncedSearch || filterType !== 'ALL' ? (
+            ) : visibleCustomers.length === 0 ? (
+              <div className="flex flex-col items-center justify-center p-12 text-center text-slate-500">
+                <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-3 text-slate-400">
+                  <UserPlus className="w-8 h-8" />
+                </div>
+                {rawCustomers.length === 0 ? (
                   <>
-                    <Filter className="w-12 h-12 text-slate-300 mb-2 stroke-1" />
-                    <p className="font-bold text-slate-700 text-sm">No customers matched your filter</p>
-                    <p className="text-xs text-slate-400 mt-1">Try changing your search keywords or filter tab</p>
+                    <h3 className="font-bold text-base text-slate-800 mb-1">Abhi koi customer nahi hai</h3>
+                    <p className="text-xs text-slate-500 max-w-xs mb-4">
+                      Apni dukan ke pehle customer ko jodein aur hisab-kitab shuru karein.
+                    </p>
+                    <button
+                      onClick={onAddCustomerClick}
+                      className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl shadow-md transition"
+                    >
+                      + Pehla Customer Jodein
+                    </button>
                   </>
                 ) : (
                   <>
-                    <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mb-3">
-                      <UserPlus className="w-8 h-8" />
-                    </div>
-                    <h3 className="font-extrabold text-slate-900 text-base">No Customers Yet</h3>
-                    <p className="text-xs text-slate-500 mt-1 max-w-sm leading-relaxed">
-                      Start maintaining your digital khata ledger. Tap the green <span className="font-bold text-emerald-700">(+)</span> button in the bottom corner to add your first customer.
+                    <h3 className="font-bold text-sm text-slate-700 mb-1">Koi customer match nahi hua</h3>
+                    <p className="text-xs text-slate-400 mb-3">
+                      Search query ya filter change karke dekhein.
                     </p>
+                    <button
+                      onClick={handleClearSearch}
+                      className="text-xs font-semibold text-emerald-600 hover:underline"
+                    >
+                      Clear Filters
+                    </button>
                   </>
                 )}
               </div>
             ) : (
-              <div>
-                {customers.map((customer) => {
+              <div className="divide-y divide-slate-100">
+                {visibleCustomers.map((customer) => {
                   const balanceInfo = getBalanceInfo(customer.balance);
-                  let timeAgo = '';
-                  try {
-                    timeAgo = formatDistanceToNow(new Date(customer.updated_at || customer.created_at), {
-                      addSuffix: true,
-                    });
-                  } catch {
-                    timeAgo = '';
-                  }
+                  const formattedPhone = formatIndianPhoneNumber(customer.phone);
 
                   return (
                     <div
                       key={customer.id}
-                      className="p-3.5 sm:p-4 border-b border-slate-100 hover:bg-slate-50/80 transition flex items-center justify-between gap-3 group"
+                      className="flex items-center justify-between p-4 hover:bg-slate-50/80 transition group cursor-pointer"
                     >
+                      {/* Customer Info */}
                       <Link
                         href={`/dashboard/customer/${customer.id}`}
-                        className="flex items-center gap-3 min-w-0 flex-1"
+                        className="flex items-center gap-3 min-w-0 flex-1 pr-3"
                       >
-                        {/* Avatar */}
-                        {customer.photo_url ? (
-                          <img
-                            src={customer.photo_url}
-                            alt={customer.name}
-                            className="w-11 h-11 rounded-full object-cover shrink-0 border border-slate-200 shadow-2xs"
-                          />
-                        ) : (
-                          <div className="w-11 h-11 rounded-full bg-emerald-100 text-emerald-800 font-black text-sm flex items-center justify-center shrink-0 uppercase border border-emerald-200">
-                            {customer.name.charAt(0)}
-                          </div>
-                        )}
+                        <div className="w-11 h-11 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-slate-700 text-base shrink-0 overflow-hidden shadow-2xs">
+                          {customer.photo_url ? (
+                            <img
+                              src={customer.photo_url}
+                              alt={customer.name}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <span>{customer.name?.charAt(0)?.toUpperCase() || '?'}</span>
+                          )}
+                        </div>
 
-                        <div className="min-w-0 flex-1">
-                          <h4 className="text-sm font-bold text-slate-900 truncate group-hover:text-emerald-700 transition">
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-sm text-slate-900 group-hover:text-emerald-700 transition truncate">
                             {customer.name}
                           </h4>
                           <div className="flex items-center gap-2 mt-0.5">
-                            {customer.phone ? (
-                              <span className="text-xs text-slate-400 font-medium">
-                                {formatIndianPhoneNumber(customer.phone)}
+                            {formattedPhone && (
+                              <span className="text-xs text-slate-500 font-medium">
+                                {formattedPhone}
                               </span>
-                            ) : (
-                              <span className="text-[11px] text-slate-400 italic">No phone</span>
                             )}
-                            {timeAgo && (
+                            {customer.updated_at && (
                               <span className="text-[10px] text-slate-400 hidden sm:inline">
-                                • {timeAgo}
+                                • {formatDistanceToNow(new Date(customer.updated_at), { addSuffix: true })}
                               </span>
                             )}
                           </div>
                         </div>
                       </Link>
 
-                      {/* Right: Net Balance & Quick WhatsApp */}
-                      <div className="flex items-center gap-3 shrink-0">
-                        <div className="text-right">
-                          <p className={`text-sm sm:text-base font-extrabold ${balanceInfo.colorClass}`}>
-                            {balanceInfo.formattedAmount}
-                          </p>
+                      {/* Balance Badge & Actions */}
+                      <div className="flex items-center gap-2.5 shrink-0">
+                        <Link
+                          href={`/dashboard/customer/${customer.id}`}
+                          className="text-right"
+                        >
                           <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block mt-0.5 ${balanceInfo.bgColor} ${balanceInfo.colorClass}`}
+                            className={`text-sm font-extrabold block ${
+                              balanceInfo.badgeColor === 'red'
+                                ? 'text-rose-600'
+                                : balanceInfo.badgeColor === 'green'
+                                ? 'text-emerald-600'
+                                : 'text-slate-500'
+                            }`}
                           >
-                            {balanceInfo.label}
+                            {formatINR(balanceInfo.formattedAbsolute)}
                           </span>
-                        </div>
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">
+                            {balanceInfo.statusLabel}
+                          </span>
+                        </Link>
 
-                        {/* WhatsApp Quick Reminder button if customer has debt */}
                         {customer.phone && Number(customer.balance) > 0 && (
                           <button
                             onClick={(e) => handleWhatsAppQuickClick(e, customer)}
@@ -422,28 +397,20 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
               </div>
             )}
 
-            {/* Server-Side Pagination Load More Bar */}
-            {!loading && customers.length > 0 && (
+            {/* Pagination Load More Bar */}
+            {!loading && visibleCustomers.length > 0 && (
               <div className="p-3.5 bg-slate-50/70 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
                 <span className="font-medium">
-                  Showing <strong className="text-slate-700">{customers.length}</strong> of{' '}
-                  <strong className="text-slate-700">{totalCount}</strong> customers
+                  Showing <strong className="text-slate-700">{visibleCustomers.length}</strong> of{' '}
+                  <strong className="text-slate-700">{filteredCustomers.length}</strong> customers
                 </span>
 
                 {hasMore && (
                   <button
                     onClick={handleLoadMore}
-                    disabled={loadingMore}
-                    className="px-4 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-emerald-700 font-bold rounded-xl shadow-2xs transition active:scale-98 flex items-center gap-1.5 disabled:opacity-60"
+                    className="px-4 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-emerald-700 font-bold rounded-xl shadow-2xs transition active:scale-98 flex items-center gap-1.5"
                   >
-                    {loadingMore ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>Loading more...</span>
-                      </>
-                    ) : (
-                      <span>Load Next 10 Customers</span>
-                    )}
+                    <span>Load More</span>
                   </button>
                 )}
               </div>
@@ -455,13 +422,13 @@ export default function CustomerList({ topDebtors = [], onAddCustomerClick }) {
         <div className="hidden lg:flex flex-col gap-4 lg:col-span-4">
           {/* Quick Action Card */}
           <div className="bg-gradient-to-br from-emerald-600 to-emerald-800 text-white rounded-2xl p-5 shadow-md">
-            <h3 className="font-bold text-base mb-1">Manage Your Ledger</h3>
+            <h3 className="font-bold text-base mb-1">Realtime Udhar Khata</h3>
             <p className="text-xs text-emerald-100 leading-relaxed">
-              Add new customer accounts, track daily credit & debit, and send instant WhatsApp receipts. Use the floating (+) button anytime.
+              Powered by Firebase Realtime Database. All balance updates sync instantly across multiple devices without reloading.
             </p>
           </div>
 
-          {/* Top Outstanding Due Customers (Fetched server-side) */}
+          {/* Top Outstanding Due Customers */}
           {topDebtors && topDebtors.length > 0 && (
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs">
               <div className="flex items-center gap-2 pb-3 border-b border-slate-100 mb-3">

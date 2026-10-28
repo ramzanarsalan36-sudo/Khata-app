@@ -1,20 +1,20 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { useShop } from '@/lib/context/ShopContext';
+import { addCustomer, createTransaction, uploadReceipt } from '@/lib/firebase/db';
 import { normalizePhoneNumber } from '@/lib/utils/phone';
 import { UserPlus, X, Loader2, ArrowUpRight, ArrowDownLeft, Camera, CheckCircle2, User, AlertCircle } from 'lucide-react';
 import { compressBillImage, compressProfileImage } from '@/lib/utils/imageCompression';
 
 export default function AddCustomerModal({ onClose, onCustomerAdded }) {
-  const { currentShop } = useShop();
+  const { currentShop, user } = useShop();
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [notes, setNotes] = useState('');
   const [openingAmount, setOpeningAmount] = useState('');
   const [openingType, setOpeningType] = useState('GAVE'); // 'GAVE' or 'GOT'
-  
+
   // Profile Photo state
   const [profileFile, setProfileFile] = useState(null);
   const [profilePreview, setProfilePreview] = useState(null);
@@ -29,7 +29,6 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
 
   const profileInputRef = useRef(null);
   const billInputRef = useRef(null);
-  const supabase = createClient();
 
   // Cleanup object URLs on unmount to prevent memory leaks
   useEffect(() => {
@@ -40,7 +39,6 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
   }, [profilePreview, imagePreview]);
 
   const handlePhoneChange = (e) => {
-    // Only allow digits up to 10 characters
     const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 10);
     setPhone(digitsOnly);
   };
@@ -78,7 +76,7 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      setError('Kripya valid bill image (photo) file select karein.');
+      setError('Kripya valid bill image file select karein.');
       return;
     }
 
@@ -134,94 +132,61 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
     setError(null);
 
     try {
-      const cleanPhone = phone ? normalizePhoneNumber(phone) : null;
+      const cleanPhone = phone ? normalizePhoneNumber(phone) : '';
       let customerPhotoUrl = null;
 
-      // 1. Upload Profile Photo if selected (with compression)
+      // 1. Upload Profile Photo if selected
       if (profileFile) {
         setUploadStatus('compressing_profile');
         const compressedProfile = await compressProfileImage(profileFile);
-
         setUploadStatus('uploading_profile');
-        const fileExt = compressedProfile.name ? compressedProfile.name.split('.').pop() : 'jpg';
-        const fileName = `${currentShop.id}/${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-
-        const { error: profileUploadError } = await supabase.storage
-          .from('customer-photos')
-          .upload(fileName, compressedProfile, {
-            contentType: 'image/jpeg',
-            upsert: false,
-          });
-
-        if (profileUploadError) {
-          console.warn('Customer profile photo upload failed:', profileUploadError);
-        } else {
-          const { data: publicUrlData } = supabase.storage
-            .from('customer-photos')
-            .getPublicUrl(fileName);
-          customerPhotoUrl = publicUrlData?.publicUrl || null;
-        }
+        const photoResult = await uploadReceipt({
+          shopId: currentShop.id,
+          customerId: 'profiles',
+          file: compressedProfile,
+        });
+        customerPhotoUrl = photoResult?.billUrl || null;
       }
 
-      // 2. Insert customer record with photo_url
-      const { data: newCustomer, error: insertError } = await supabase
-        .from('customers')
-        .insert({
-          shop_id: currentShop.id,
-          name: cleanName,
-          phone: cleanPhone,
-          photo_url: customerPhotoUrl,
-          notes: notes.trim() || null,
-          balance: 0.00,
-        })
-        .select()
-        .single();
+      // 2. Insert customer record in Firebase Realtime Database
+      const newCustomer = await addCustomer(currentShop.id, {
+        name: cleanName,
+        phone: cleanPhone,
+        photo_url: customerPhotoUrl,
+        notes: notes.trim() || '',
+        address: notes.trim() || '',
+      });
 
-      if (insertError) throw insertError;
-
-      // 3. If bill receipt photo attached, compress and upload
+      // 3. Upload bill receipt if present
       let billPath = null;
+      let billUrl = null;
       if (imageFile) {
         setUploadStatus('compressing_bill');
         const compressedBill = await compressBillImage(imageFile);
-
         setUploadStatus('uploading_bill');
-        const fileExt = compressedBill.name ? compressedBill.name.split('.').pop() : 'jpg';
-        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-        const filePath = `${currentShop.id}/${newCustomer.id}/${fileName}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from('bill-receipts')
-          .upload(filePath, compressedBill, {
-            contentType: 'image/jpeg',
-            upsert: false,
-          });
-
-        if (uploadError) {
-          console.error('Storage upload error:', uploadError);
-          throw new Error(`Receipt upload failed: ${uploadError.message}`);
-        }
-
-        billPath = filePath;
+        const billRes = await uploadReceipt({
+          shopId: currentShop.id,
+          customerId: newCustomer.id,
+          file: compressedBill,
+        });
+        billPath = billRes?.billPath;
+        billUrl = billRes?.billUrl;
       }
 
-      // 4. If opening balance entered, record opening transaction via atomic RPC
+      // 4. Create opening transaction if amount provided
       if (!isNaN(amountNum) && amountNum > 0) {
-        const clientTxId = crypto.randomUUID();
-        const { data: rpcData, error: rpcError } = await supabase.rpc('create_transaction', {
-          p_shop_id: currentShop.id,
-          p_customer_id: newCustomer.id,
-          p_amount: amountNum,
-          p_type: openingType,
-          p_note: 'Opening Balance (Purana Hisab)',
-          p_bill_path: billPath,
-          p_client_transaction_id: clientTxId,
+        const txRes = await createTransaction({
+          shopId: currentShop.id,
+          customerId: newCustomer.id,
+          amount: amountNum,
+          type: openingType,
+          note: 'Opening Balance (Purana Hisab)',
+          billPath,
+          billUrl,
+          userId: user?.uid || 'FNSMYvR9vhOcvFVPdfu6N7i1Lyc2',
         });
-
-        if (rpcError) {
-          console.error('Warning: Customer created, but opening balance RPC failed:', rpcError);
-        } else if (rpcData?.customer_balance !== undefined) {
-          newCustomer.balance = rpcData.customer_balance;
+        if (txRes?.customer_balance !== undefined) {
+          newCustomer.balance = txRes.customer_balance;
         }
       }
 
@@ -268,7 +233,7 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4 max-h-[80vh] overflow-y-auto pr-1">
           {/* Profile Photo Uploader */}
           <div className="flex flex-col items-center justify-center mb-1">
             <div className="relative group">
@@ -321,16 +286,6 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
             <p className="text-[11px] font-semibold text-slate-500 mt-1.5">
               Customer Profile Photo (Optional)
             </p>
-            {uploadStatus === 'compressing_profile' && (
-              <p className="text-[10px] text-emerald-600 font-semibold animate-pulse mt-0.5">
-                Compressing profile photo...
-              </p>
-            )}
-            {uploadStatus === 'uploading_profile' && (
-              <p className="text-[10px] text-emerald-600 font-semibold animate-pulse mt-0.5">
-                Uploading photo...
-              </p>
-            )}
           </div>
 
           <div>
@@ -358,48 +313,48 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
               </span>
               <input
                 type="tel"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                maxLength={10}
-                placeholder="98765 43210"
+                placeholder="9876543210"
                 value={phone}
                 onChange={handlePhoneChange}
+                maxLength={10}
                 className="w-full pl-12 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition"
               />
             </div>
-            <p className="text-[11px] text-slate-400 mt-1">Sirf 10 digit ka mobile number likhein (numbers only).</p>
           </div>
 
-          {/* Opening Balance (Optional) */}
-          <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2.5">
-            <label className="block text-xs font-bold text-slate-700">
-              Opening Balance (Purana Baki / Optional)
-            </label>
-            <div className="grid grid-cols-2 gap-2 mb-2">
+          {/* Opening Balance Section */}
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-700">
+                Opening Balance (Purana Hisab - Optional)
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => setOpeningType('GAVE')}
-                className={`py-2 px-3 text-xs font-bold rounded-xl border flex items-center justify-center gap-1.5 transition ${
+                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold transition border ${
                   openingType === 'GAVE'
-                    ? 'bg-rose-50 border-rose-500 text-rose-700 shadow-xs'
+                    ? 'bg-rose-50 border-rose-500 text-rose-700 shadow-2xs'
                     : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                 }`}
               >
                 <ArrowUpRight className="w-3.5 h-3.5 text-rose-600" />
-                <span>Baki (Diya)</span>
+                <span>Maine Diye (Udhar)</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setOpeningType('GOT')}
-                className={`py-2 px-3 text-xs font-bold rounded-xl border flex items-center justify-center gap-1.5 transition ${
+                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold transition border ${
                   openingType === 'GOT'
-                    ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-xs'
+                    ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-2xs'
                     : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                 }`}
               >
                 <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Jama (Liya)</span>
+                <span>Mujhe Mile (Advance)</span>
               </button>
             </div>
 
@@ -414,32 +369,34 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
                 placeholder="0.00"
                 value={openingAmount}
                 onChange={(e) => setOpeningAmount(e.target.value)}
-                className="w-full pl-8 pr-3.5 py-2.5 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 transition"
+                className="w-full pl-8 pr-3.5 py-2 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 font-semibold"
               />
             </div>
 
-            {/* Bill Photo Attachment for Opening Balance */}
+            {/* Bill Receipt Upload */}
             <div className="pt-1">
-              <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                Attach Bill / Receipt Photo (Optional)
-              </label>
-
-              {imagePreview ? (
-                <div className="relative inline-block border border-slate-200 rounded-xl overflow-hidden shadow-xs">
-                  <img
-                    src={imagePreview}
-                    alt="Receipt Preview"
-                    className="w-20 h-20 object-cover"
-                  />
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] font-bold text-slate-600">
+                  Purana Bill Photo / Parcha (Optional)
+                </span>
+                {imagePreview && (
                   <button
                     type="button"
                     onClick={removeImage}
-                    className="absolute top-1 right-1 bg-rose-600 hover:bg-rose-700 text-white rounded-full p-1 shadow-sm transition"
-                    title="Remove Receipt"
-                    aria-label="Remove receipt photo"
+                    className="text-[11px] text-rose-600 font-semibold hover:underline"
                   >
-                    <X className="w-3 h-3" />
+                    Hatao
                   </button>
+                )}
+              </div>
+
+              {imagePreview ? (
+                <div className="relative rounded-xl overflow-hidden border border-slate-200 h-28 bg-black/5 flex items-center justify-center">
+                  <img
+                    src={imagePreview}
+                    alt="Receipt preview"
+                    className="w-full h-full object-contain"
+                  />
                 </div>
               ) : (
                 <div>
@@ -464,15 +421,6 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
                   </button>
                 </div>
               )}
-
-              {uploadStatus && (
-                <p className="text-[11px] text-emerald-600 font-semibold mt-1.5 flex items-center gap-1 animate-pulse">
-                  <CheckCircle2 className="w-3 h-3" />
-                  {uploadStatus === 'compressing' && 'Compressing photo for fast upload...'}
-                  {uploadStatus === 'uploading' && 'Uploading bill photo to private vault...'}
-                  {uploadStatus === 'done' && 'Photo attached securely'}
-                </p>
-              )}
             </div>
           </div>
 
@@ -489,7 +437,7 @@ export default function AddCustomerModal({ onClose, onCustomerAdded }) {
             />
           </div>
 
-          {/* Action & Cancel Buttons */}
+          {/* Action Buttons */}
           <div className="space-y-2 pt-1">
             <button
               type="submit"
